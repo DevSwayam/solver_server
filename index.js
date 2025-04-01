@@ -7,30 +7,38 @@ const { ethers } = require("ethers");
 
 const app = express();
 
-// ✅ Enable CORS for all origins and routes
 app.use(cors());
 app.use(express.json());
 
 app.post("/solve", async (req, res) => {
   try {
-    const { txId, userAddress, chainName, intentType, distributions } = req.body;
+    const { txId, userAddress, chainName, intentType, encodedData } = req.body;
     console.log("Received request:", req.body);
-    if (!txId || !userAddress || !distributions || !chainName) {
+
+    if (!txId || !userAddress || !chainName || !encodedData) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const totalRequired = distributions.reduce((sum, dist) => sum + BigInt(dist[2]), 0n);
+    // ✅ Decode the encodedData
+    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["tuple(address[],uint256[],uint256,uint32)[]"],
+      encodedData
+    );
 
+    const distributions = decoded[0];
+
+    // ✅ Sum totalRequired from distributions
+    const totalRequired = distributions.reduce((sum, dist) => {
+      return sum + dist[2]; // dist[2] is already a BigInt (ethers v6)
+    }, 0n);
+
+    // ✅ Verify deposit
     const totalDeposited = await verifyDeposit(txId, userAddress, chainName);
     if (totalRequired > totalDeposited) {
       return res.status(400).json({ error: "Insufficient deposit" });
     }
 
-    const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address[],uint256[],uint256,uint32)[]"],
-      [distributions]
-    );
-
+    // ✅ Sign or send
     const result = await handleIntent(intentType, encodedData);
     res.json(result);
 
@@ -40,7 +48,7 @@ app.post("/solve", async (req, res) => {
   }
 });
 
-// ✅ Health check route (optional)
+// Health route
 app.get("/", (req, res) => {
   res.send("Solver API is running!");
 });
